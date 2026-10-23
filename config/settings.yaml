@@ -1,0 +1,16 @@
+parameters:
+  bioelectric: {feature: abs_dev, direction: up, min: 0.0, max: 100.0, weight: 1.0}
+  leaf_temp: {feature: delta_t, direction: up, min: 0.0, max: 15.0, weight: 1.0}
+  color: {feature: dgci, direction: down, min: 0.0, max: 1.0, weight: 1.0}
+  el: {feature: el_pct, direction: up, min: 0.0, max: 100.0, weight: 1.0}
+thresholds:
+  warning: 0.33
+  high: 0.66
+  single_param_override: 0.8
+  ambiguity_delta: 0.15
+persistence_n: 2
+image:
+  hsv_low: [25, 40, 40]
+  hsv_high: [95, 255, 255]
+  min_leaf_pixels: 500
+  max_side_px: 1600
