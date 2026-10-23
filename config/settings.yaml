@@ -14,3 +14,4 @@ image:
   hsv_high: [95, 255, 255]
   min_leaf_pixels: 500
   max_side_px: 1600
+  max_mask_coverage: 0.85

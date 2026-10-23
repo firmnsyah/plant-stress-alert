@@ -1,6 +1,7 @@
 """Plant Stress Fingerprint Streamlit application."""
 
 from pathlib import Path
+from copy import deepcopy
 
 import streamlit as st
 
@@ -22,6 +23,24 @@ def get_db() -> Database:
     return database
 
 
+def get_settings(db: Database) -> dict:
+    defaults = load_file(CONFIG_PATH)
+    active = db.active_config_json()
+    if active is None:
+        return defaults
+
+    def merge(base: dict, override: dict) -> dict:
+        result = deepcopy(base)
+        for key, value in override.items():
+            if isinstance(value, dict) and isinstance(result.get(key), dict):
+                result[key] = merge(result[key], value)
+            else:
+                result[key] = value
+        return result
+
+    return merge(defaults, active)
+
+
 st.set_page_config(page_title="Plant Stress Fingerprint", page_icon="🌿", layout="wide")
 db = get_db()
 st.title("Plant Stress Fingerprint")
@@ -32,4 +51,7 @@ col1, col2, col3 = st.columns(3)
 col1.metric("Tanaman", len(plants))
 col2.metric("Observasi", len(observations))
 col3.metric("Status Warning+", int((observations["status"].isin(["Warning", "High Stress"])).sum()) if "status" in observations else 0)
+if not observations.empty and "status" in observations:
+    st.subheader("Status observasi")
+    st.bar_chart(observations["status"].value_counts(), x_label="Status", y_label="Jumlah")
 st.info("Gunakan halaman di panel kiri untuk menambah tanaman, menyimpan observasi, dan menjalankan analisis.")

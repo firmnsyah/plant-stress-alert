@@ -22,18 +22,41 @@ def analyze_leaf(
     hsv_high: Sequence[int],
     min_leaf_pixels: int = 500,
     max_side_px: int = 1600,
+    crop: tuple[float, float, float, float] | None = None,
+    keep_largest_component: bool = True,
+    max_mask_coverage: float = 0.85,
 ) -> dict[str, object]:
     if img is None or img.ndim != 3 or img.shape[2] != 3:
         raise ValueError("Citra harus berupa array BGR tiga kanal.")
     image = _resize(img, max_side_px)
+    if crop is not None:
+        left, top, right, bottom = crop
+        if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+            raise ValueError("Area crop harus berada dalam rentang 0 sampai 1.")
+        height, width = image.shape[:2]
+        image = image[round(top * height):round(bottom * height),
+                      round(left * width):round(right * width)]
+        if image.size == 0:
+            raise ValueError("Area crop menghasilkan citra kosong.")
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, np.array(hsv_low, dtype=np.uint8), np.array(hsv_high, dtype=np.uint8))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    if keep_largest_component:
+        components, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        if components > 1:
+            largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+            mask = np.where(labels == largest, 255, 0).astype(np.uint8)
     selected = mask > 0
     leaf_pixels = int(selected.sum())
     if leaf_pixels < min_leaf_pixels:
         raise ValueError(f"Segmentasi hanya menemukan {leaf_pixels} piksel daun; minimal {min_leaf_pixels}.")
+    coverage = leaf_pixels / selected.size
+    if coverage > max_mask_coverage:
+        raise ValueError(
+            f"Mask menutupi {coverage:.0%} citra; latar kemungkinan ikut terseleksi. "
+            "Crop area daun atau sesuaikan ambang HSV."
+        )
     bgr = image[selected].astype(np.float64)
     hsv_values = hsv[selected].astype(np.float64)
     blue, green, red = bgr.mean(axis=0)
@@ -48,6 +71,7 @@ def analyze_leaf(
         "r": float(red), "g": float(green), "b": float(blue),
         "h": float(hue_degrees), "s": float(saturation), "v": float(value),
         "dgci": float(dgci), "exg": float(exg), "leaf_pixels": leaf_pixels,
+        "mask_coverage": float(coverage),
         "mask": mask,
         "image": image,
     }

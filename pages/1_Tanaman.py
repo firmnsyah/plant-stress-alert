@@ -11,6 +11,7 @@ with st.form("plant"):
     treatment = st.selectbox("Perlakuan", ["kontrol", "panas", "salinitas", "kekeringan"])
     planted_at = st.date_input("Tanggal tanam", value=date.today())
     stress_started_at = st.date_input("Mulai cekaman", value=date.today())
+    first_wilt_at = st.date_input("Layu pertama (opsional)", value=None)
     notes = st.text_area("Catatan")
     if st.form_submit_button("Simpan tanaman"):
         if not code.strip():
@@ -18,7 +19,9 @@ with st.form("plant"):
         else:
             try:
                 db.add_plant(code.strip(), treatment, planted_at=str(planted_at),
-                             stress_started_at=str(stress_started_at), notes=notes)
+                             stress_started_at=str(stress_started_at),
+                             first_wilt_at=str(first_wilt_at) if first_wilt_at else None,
+                             notes=notes)
                 st.success("Tanaman tersimpan.")
             except Exception as exc:
                 st.error(f"Tanaman gagal disimpan: {exc}")

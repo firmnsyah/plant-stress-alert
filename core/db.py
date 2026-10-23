@@ -39,6 +39,8 @@ class Database:
                 (datetime.now(UTC).isoformat(), note, settings_json),
             )
             self.connection.commit()
+            if cursor.lastrowid is None:
+                raise RuntimeError("ID konfigurasi tidak tersedia setelah penyimpanan.")
             return int(cursor.lastrowid)
 
     def active_config(self) -> sqlite3.Row | None:
@@ -46,6 +48,10 @@ class Database:
             return self.connection.execute(
                 "SELECT * FROM config_versions ORDER BY id DESC LIMIT 1"
             ).fetchone()
+
+    def active_config_json(self) -> dict[str, Any] | None:
+        row = self.active_config()
+        return json.loads(row["settings_json"]) if row else None
 
     def add_plant(self, code: str, treatment: str, **fields: Any) -> int:
         with self._lock:
@@ -56,6 +62,8 @@ class Database:
                  fields.get("first_wilt_at"), fields.get("notes")),
             )
             self.connection.commit()
+            if cursor.lastrowid is None:
+                raise RuntimeError("ID tanaman tidak tersedia setelah penyimpanan.")
             return int(cursor.lastrowid)
 
     def list_plants(self) -> pd.DataFrame:
@@ -74,6 +82,8 @@ class Database:
                  values["el_percent"], values["wilt_score"], values.get("notes")),
             )
             self.connection.commit()
+            if cursor.lastrowid is None:
+                raise RuntimeError("ID observasi tidak tersedia setelah penyimpanan.")
             return int(cursor.lastrowid)
 
     def add_image(self, observation_id: int, image: dict[str, Any], file_path: str,
@@ -89,6 +99,8 @@ class Database:
                  json.dumps(hsv_low), json.dumps(hsv_high), int(has_gray_card)),
             )
             self.connection.commit()
+            if cursor.lastrowid is None:
+                raise RuntimeError("ID foto tidak tersedia setelah penyimpanan.")
             return int(cursor.lastrowid)
 
     def save_analysis(self, observation_id: int, config_id: int, result: dict[str, Any]) -> int:
@@ -106,12 +118,23 @@ class Database:
                  int(result.get("ambiguous", False))),
             )
             self.connection.commit()
+            if cursor.lastrowid is None:
+                raise RuntimeError("ID analisis tidak tersedia setelah penyimpanan.")
             return int(cursor.lastrowid)
 
     def list_observations(self, treatment: str | None = None) -> pd.DataFrame:
-        query = """SELECT o.*, p.code, p.treatment, ar.stress_index, ar.status
+        query = """SELECT o.*, p.code, p.treatment, li.file_path, li.r, li.g, li.b,
+                          li.h, li.s, li.v, li.dgci, li.exg, li.leaf_pixels,
+                          ar.stress_index, ar.status, ar.norm_bio, ar.norm_temp,
+                          ar.norm_color, ar.norm_el, ar.nearest_treatment,
+                          ar.nearest_distance, ar.second_treatment, ar.second_distance,
+                          ar.ambiguous
                    FROM observations o JOIN plants p ON p.id=o.plant_id
-                   LEFT JOIN analysis_results ar ON ar.observation_id=o.id
+                   LEFT JOIN leaf_images li ON li.observation_id=o.id
+                   LEFT JOIN analysis_results ar ON ar.id = (
+                     SELECT latest.id FROM analysis_results latest
+                     WHERE latest.observation_id=o.id ORDER BY latest.id DESC LIMIT 1
+                   )
                    WHERE o.deleted_at IS NULL"""
         params: tuple[Any, ...] = ()
         if treatment:
@@ -120,6 +143,57 @@ class Database:
         query += " ORDER BY o.observed_at"
         with self._lock:
             return pd.read_sql_query(query, self.connection, params=params)
+
+    def fingerprint_data(self, treatment: str | None = None) -> pd.DataFrame:
+        frame = self.list_observations(treatment)
+        columns = ["code", "treatment", "observed_at", "norm_bio", "norm_temp",
+                   "norm_color", "norm_el", "stress_index", "status"]
+        available = [column for column in columns if column in frame.columns]
+        return frame[available].dropna(subset=["norm_bio", "norm_temp", "norm_color", "norm_el"])
+
+    def soft_delete_observation(self, observation_id: int) -> None:
+        with self._lock:
+            self.connection.execute(
+                "UPDATE observations SET deleted_at=? WHERE id=?",
+                (datetime.now(UTC).isoformat(), observation_id),
+            )
+            self.connection.commit()
+
+    def import_observations(self, frame: pd.DataFrame) -> tuple[int, list[str]]:
+        required = {
+            "plant_code", "observed_at", "bioelectric_mv", "leaf_temp_c",
+            "air_temp_c", "ec1_us", "ec2_us", "wilt_score",
+        }
+        missing = sorted(required - set(frame.columns))
+        if missing:
+            raise ValueError(f"Kolom CSV wajib belum ada: {', '.join(missing)}.")
+        imported = 0
+        errors: list[str] = []
+        plants = {
+            str(row["code"]): int(row["id"])
+            for _, row in self.list_plants().iterrows()
+        }
+        for index, row in frame.iterrows():
+            try:
+                code = str(row["plant_code"])
+                if code not in plants:
+                    raise ValueError(f"tanaman {code} belum terdaftar")
+                ec1, ec2 = float(row["ec1_us"]), float(row["ec2_us"])
+                self.add_observation(plants[code], str(row["observed_at"]), {
+                    "bioelectric_mv": float(row["bioelectric_mv"]),
+                    "leaf_temp_c": float(row["leaf_temp_c"]),
+                    "air_temp_c": float(row["air_temp_c"]),
+                    "ec1_us": ec1,
+                    "ec2_us": ec2,
+                    "el_percent": ec1 / ec2 * 100,
+                    "wilt_score": int(row["wilt_score"]),
+                    "day_after_treatment": int(row.get("day_after_treatment", 0)),
+                    "notes": str(row.get("notes", "")),
+                })
+                imported += 1
+            except (TypeError, ValueError, sqlite3.IntegrityError) as exc:
+                errors.append(f"baris {index + 2}: {exc}")
+        return imported, errors
 
     def export(self, output: Path, treatment: str | None = None) -> Path:
         frame = self.list_observations(treatment)
