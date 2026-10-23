@@ -6,5 +6,7 @@ data/*.db
 data/*.db-*
 data/images/*
 !data/images/.gitkeep
+plant-stress-fingerprint-perencanaan.md
+.devcontainer/
 *.xlsx
 *.csv
