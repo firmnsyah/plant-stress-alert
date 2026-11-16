@@ -1,6 +1,6 @@
-# Plant Stress Fingerprint
+# Plant Stress Alert
 
-Aplikasi Streamlit untuk mencatat empat pengukuran murah pada cabai, menganalisis warna daun, dan merangkum pola cekaman.
+Aplikasi Streamlit untuk skrining kondisi visual daun dari satu foto.
 
 ## Menjalankan
 
@@ -11,19 +11,22 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Data lokal disimpan di `data/plant.db`. Jangan memasukkan database, foto, atau hasil eksperimen ke Git. Google Sheets/Supabase belum termasuk v1.0.
-
 ## Alur penggunaan
 
-1. Daftarkan tanaman dan perlakuan di halaman **Tanaman**.
-2. Masukkan pengukuran dan foto di **Input Observasi**.
-3. Periksa mask foto sebelum menyimpan.
-4. Setelah disimpan, aplikasi menampilkan EL, ΔT, DGCI, nilai normalisasi, Stress Index, dan status.
-5. Gunakan **Data** untuk filter, impor CSV data logger, ekspor CSV/XLSX, dan hapus lunak.
-6. Gunakan **Analisis** untuk grafik waktu, ANOVA/Tukey, dan PCA.
-7. Gunakan **Fingerprint** untuk membangun centroid dari hasil observasi berlabel dan membandingkan observasi.
-8. Gunakan **Pengaturan** untuk membuat versi ambang dan bobot yang dapat direproduksi.
+1. Upload satu foto daun.
+2. Crop jika background ikut terseleksi.
+3. Periksa mask daun.
+4. Baca warna, luas relatif, indikator bentuk menggulung, skor, dan kondisi.
+
+Output kondisi:
+
+- Normal
+- Stres Ringan
+- Stres Sedang
+- Stres Berat
+
+Luas daun dihitung sebagai luas mask dalam piksel dan persentase area foto; luas fisik cm² tidak dapat diketahui tanpa skala referensi.
 
 ## Batas klaim
 
-Model v1.0 menggunakan Stress Index dan centroid fingerprint. Ambang contoh harus dikalibrasi dari data pilot. Klaim deteksi sebelum layu hanya boleh dibuat bila analisis waktu menunjukkan peringatan lebih awal pada data validasi independen.
+Hasil adalah skrining visual, bukan diagnosis penyebab stres. Pencahayaan, sudut kamera, varietas, background, dan kualitas segmentasi dapat memengaruhi hasil.

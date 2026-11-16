@@ -1,57 +1,78 @@
-"""Plant Stress Fingerprint Streamlit application."""
+"""Photo-only Plant Stress Alert application."""
 
-from pathlib import Path
-from copy import deepcopy
-
+import cv2
+import numpy as np
 import streamlit as st
 
-from core.config import load_file
-from core.db import Database
-
-ROOT = Path(__file__).parent
-DB_PATH = ROOT / "data" / "plant.db"
-CONFIG_PATH = ROOT / "config" / "settings.yaml"
-MIGRATION_PATH = ROOT / "migrations" / "001_init.sql"
+from core.leaf_condition import analyze_leaf_condition
 
 
-@st.cache_resource
-def get_db() -> Database:
-    database = Database(DB_PATH)
-    database.migrate(MIGRATION_PATH)
-    if database.active_config() is None:
-        database.save_config(__import__("json").dumps(load_file(CONFIG_PATH)), "Konfigurasi awal")
-    return database
+st.set_page_config(page_title="Plant Stress Alert", page_icon="🌿", layout="centered")
+st.title("Plant Stress Alert")
+st.caption("Skrining kondisi daun berdasarkan satu foto.")
+st.info(
+    "Upload satu foto daun. Sistem menilai warna, luas area daun, dan indikator "
+    "bentuk tidak normal seperti kemungkinan menggulung."
+)
 
+uploaded = st.file_uploader("Upload foto daun", type=["jpg", "jpeg", "png"])
+if uploaded is None:
+    st.stop()
 
-def get_settings(db: Database) -> dict:
-    defaults = load_file(CONFIG_PATH)
-    active = db.active_config_json()
-    if active is None:
-        return defaults
+image = cv2.imdecode(np.frombuffer(uploaded.getvalue(), dtype=np.uint8), cv2.IMREAD_COLOR)
+if image is None:
+    st.error("File tidak dapat dibaca sebagai gambar.")
+    st.stop()
 
-    def merge(base: dict, override: dict) -> dict:
-        result = deepcopy(base)
-        for key, value in override.items():
-            if isinstance(value, dict) and isinstance(result.get(key), dict):
-                result[key] = merge(result[key], value)
-            else:
-                result[key] = value
-        return result
+st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption="Foto daun", width="stretch")
+st.caption("Gunakan crop jika background ikut terseleksi.")
+columns = st.columns(4)
+left = columns[0].slider("Kiri (%)", 0, 80, 0)
+top = columns[1].slider("Atas (%)", 0, 80, 0)
+right = columns[2].slider("Kanan (%)", 20, 100, 100)
+bottom = columns[3].slider("Bawah (%)", 20, 100, 100)
 
-    return merge(defaults, active)
+if left >= right or top >= bottom:
+    st.error("Batas crop tidak valid.")
+    st.stop()
 
+try:
+    result = analyze_leaf_condition(
+        image, crop=(left / 100, top / 100, right / 100, bottom / 100)
+    )
+except ValueError as exc:
+    st.error(str(exc))
+    st.stop()
 
-st.set_page_config(page_title="Plant Stress Fingerprint", page_icon="🌿", layout="wide")
-db = get_db()
-st.title("Plant Stress Fingerprint")
-st.caption("Deteksi pola cekaman cabai berbasis pengukuran fisiologis dan foto daun.")
-plants = db.list_plants()
-observations = db.list_observations()
-col1, col2, col3 = st.columns(3)
-col1.metric("Tanaman", len(plants))
-col2.metric("Observasi", len(observations))
-col3.metric("Status Warning+", int((observations["status"].isin(["Warning", "High Stress"])).sum()) if "status" in observations else 0)
-if not observations.empty and "status" in observations:
-    st.subheader("Status observasi")
-    st.bar_chart(observations["status"].value_counts(), x_label="Status", y_label="Jumlah")
-st.info("Gunakan halaman di panel kiri untuk menambah tanaman, menyimpan observasi, dan menjalankan analisis.")
+st.image(result["mask"], caption="Mask daun", width="stretch")
+st.subheader(f"Kondisi: {result['condition']}")
+st.metric("Skor kondisi", f"{result['stress_score'] * 100:.0f}/100")
+
+metrics = st.columns(3)
+metrics[0].metric("Warna hijau", f"{result['green_ratio']:.1%}")
+metrics[1].metric("Kuning/cokelat", f"{result['yellow_brown_ratio']:.1%}")
+metrics[2].metric("Indikasi menggulung", f"{result['curl_indicator']:.1%}")
+
+st.subheader("Luas daun")
+st.write(
+    f"{result['leaf_area_px']:,.0f} piksel "
+    f"({result['leaf_area_ratio']:.1%} dari area foto)."
+)
+st.caption(
+    "Luas dihitung dari mask segmentasi dan bersifat relatif terhadap ukuran foto; "
+    "bukan luas fisik dalam cm²."
+)
+
+if result["condition"] == "Normal":
+    st.success("Daun tampak normal pada foto.")
+elif result["condition"] == "Stres Ringan":
+    st.warning("Terlihat perubahan ringan; pantau dengan foto berikutnya.")
+elif result["condition"] == "Stres Sedang":
+    st.warning("Terlihat perubahan yang perlu diperiksa lebih lanjut.")
+else:
+    st.error("Terlihat indikasi perubahan berat pada daun.")
+
+st.caption(
+    "Hasil adalah skrining visual, bukan diagnosis penyebab stres. "
+    "Pencahayaan, sudut foto, varietas, dan background memengaruhi hasil."
+)
